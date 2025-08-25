@@ -13,6 +13,7 @@ from flask import Flask
 BOT_TOKEN = os.environ.get("BOT_TOKEN") or "YOUR_BOT_TOKEN"
 CHAT_ID = int(os.environ.get("CHAT_ID") or 0)
 KLINES_URL = "https://api.binance.com/api/v3/klines"
+TOP_COINS_URL = "https://api.binance.com/api/v3/ticker/24hr"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
@@ -74,15 +75,17 @@ def generate_signal(symbol, interval):
         rsi_val = rsi(closes)[-1]
         macd_line, signal_line = macd(closes)
         ema_val = ema(closes,20)[-1]
-        signal_msg = ""
+        signal_msg = f"{symbol} | {interval}\nPrice: {last_close:.4f}\nRSI: {rsi_val:.2f}\nMACD: {macd_line[-1]:.4f}\nSignal Line: {signal_line[-1]:.4f}\nEMA: {ema_val:.4f}\n"
         if rsi_val < settings["rsi_buy"] and macd_line[-1] > signal_line[-1] and last_close>ema_val:
-            signal_msg = f"🟢 STRONG BUY {symbol} | RSI:{rsi_val:.2f} | MACD:{macd_line[-1]:.2f} | EMA:{ema_val:.2f} | Price:{last_close} | Valid:{settings['signal_validity_min']}min"
+            signal_msg += "🟢 STRONG BUY"
         elif rsi_val > settings["rsi_sell"] and macd_line[-1] < signal_line[-1] and last_close<ema_val:
-            signal_msg = f"🔴 STRONG SELL {symbol} | RSI:{rsi_val:.2f} | MACD:{macd_line[-1]:.2f} | EMA:{ema_val:.2f} | Price:{last_close} | Valid:{settings['signal_validity_min']}min"
-        return signal_msg if signal_msg else None
+            signal_msg += "🔴 STRONG SELL"
+        else:
+            signal_msg += "⚪ Neutral"
+        return signal_msg
     except Exception as e:
         print(f"[ERROR] Generating signal for {symbol}: {e}")
-        return None
+        return f"❌ Error fetching {symbol} data"
 
 # ================= SIGNAL MANAGEMENT =================
 auto_signals_enabled = True
@@ -118,9 +121,9 @@ user_temp = {}   # temporary data storage per user
 def main_menu(msg):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("➕ Add Coin","📊 My Coins")
-    markup.add("📈 Top Movers","📡 Signals")
-    markup.add("🛑 Stop Signals","🔄 Reset Settings")
-    markup.add("⚙️ Signal Settings","🔍 Preview Signal")
+    markup.add("➖ Remove Coin","📈 Top Movers")
+    markup.add("📡 Signals","🛑 Stop Signals")
+    markup.add("🔄 Reset Settings","⚙️ Signal Settings","🔍 Preview Signal")
     bot.send_message(msg.chat.id,"🤖 Main Menu:", reply_markup=markup)
     user_state[msg.chat.id]=None
 
@@ -150,6 +153,36 @@ def process_add_coin(msg):
         bot.send_message(chat_id,f"{coin} already exists.")
     user_state[chat_id] = None
     main_menu(msg)
+
+# ================= REMOVE COIN =================
+@bot.message_handler(func=lambda m: m.text=="➖ Remove Coin")
+def remove_coin_menu(msg):
+    chat_id = msg.chat.id
+    if not coins:
+        bot.send_message(chat_id,"⚠️ No coins saved.")
+        return
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for c in coins:
+        markup.add(c)
+    markup.add("🔙 Back")
+    bot.send_message(chat_id,"Select coin to remove:", reply_markup=markup)
+    user_state[chat_id] = "remove_coin"
+
+@bot.message_handler(func=lambda m: user_state.get(m.chat.id)=="remove_coin")
+def process_remove_coin(msg):
+    chat_id = msg.chat.id
+    coin = msg.text.upper()
+    if coin=="🔙 Back":
+        main_menu(msg)
+        return
+    if coin in coins:
+        coins.remove(coin)
+        save_json(USER_COINS_FILE, coins)
+        bot.send_message(chat_id,f"✅ {coin} removed.")
+    else:
+        bot.send_message(chat_id,"❌ Coin not found.")
+    main_menu(msg)
+    user_state[chat_id]=None
 
 # ================= MY COINS =================
 @bot.message_handler(func=lambda m: m.text=="📊 My Coins")
@@ -188,10 +221,9 @@ def my_coin_timeframe(msg):
     if tf=="🔙 Back":
         my_coins_menu(msg)
         return
-    if tf in ["1m","5m","15m","1h","1d"]:
-        coin = user_temp.get(chat_id)
-        sig = generate_signal(coin, tf)
-        bot.send_message(chat_id, sig or f"No signal for {coin} {tf}")
+    coin = user_temp.get(chat_id)
+    sig = generate_signal(coin, tf)
+    bot.send_message(chat_id, sig)
 
 # ================= TOP MOVERS =================
 @bot.message_handler(func=lambda m: m.text=="📈 Top Movers")
@@ -211,8 +243,17 @@ def top_movers_tf(msg):
     if tf=="🔙 Back":
         main_menu(msg)
         return
-    # Example placeholder for top movers
-    bot.send_message(chat_id,f"Top movers for {tf} timeframe (placeholder)")
+    # Fetch top 10 coins by 24h percent change (placeholder)
+    try:
+        data = requests.get(TOP_COINS_URL, timeout=10).json()
+        data.sort(key=lambda x: abs(float(x["priceChangePercent"])), reverse=True)
+        top = data[:10]
+        msg_text = f"Top Movers ({tf}):\n"
+        for t in top:
+            msg_text += f"{t['symbol']}: {t['priceChangePercent']}%\n"
+        bot.send_message(chat_id, msg_text)
+    except:
+        bot.send_message(chat_id,"❌ Error fetching top movers")
 
 # ================= SIGNALS =================
 @bot.message_handler(func=lambda m: m.text=="📡 Signals")
@@ -251,16 +292,20 @@ def signals_timeframe(msg):
     if signal_type=="My Coins":
         active_coins = coins
     elif signal_type=="All Coins":
-        active_coins = ["BTCUSDT","ETHUSDT","SOLUSDT"]  # placeholder top coins
+        try:
+            data = requests.get(TOP_COINS_URL, timeout=10).json()
+            data.sort(key=lambda x: abs(float(x["priceChangePercent"])), reverse=True)
+            active_coins = [t["symbol"] for t in data[:50]]
+        except:
+            active_coins = ["BTCUSDT","ETHUSDT"]
     elif signal_type=="Any Coin":
         bot.send_message(chat_id,"Type the coin symbol:")
         user_state[chat_id]="any_coin_input"
-        user_temp[chat_id] = tf  # store timeframe temporarily
+        user_temp[chat_id] = tf
         return
     for c in active_coins:
         sig = generate_signal(c, tf)
-        if sig:
-            bot.send_message(chat_id,sig)
+        bot.send_message(chat_id,sig)
 
 @bot.message_handler(func=lambda m: user_state.get(m.chat.id)=="any_coin_input")
 def any_coin_input(msg):
@@ -268,7 +313,7 @@ def any_coin_input(msg):
     coin = msg.text.upper()
     tf = user_temp.get(chat_id)
     sig = generate_signal(coin, tf)
-    bot.send_message(chat_id, sig or f"No signal for {coin} {tf}")
+    bot.send_message(chat_id, sig)
     user_state[chat_id]=None
     main_menu(msg)
 
@@ -298,7 +343,9 @@ def reset_settings(msg):
     global settings
     settings={"rsi_buy":20,"rsi_sell":80,"signal_validity_min":15}
     save_json(SETTINGS_FILE,settings)
-    bot.send_message(msg.chat.id,"✅ Settings reset to default.")
+    bot.send_message(msg.chat.id,
+        f"✅ Settings reset to default:\nRSI Buy: {settings['rsi_buy']}\nRSI Sell: {settings['rsi_sell']}\nSignal Validity: {settings['signal_validity_min']} min"
+    )
     main_menu(msg)
 
 # ================= SIGNAL SETTINGS =================
@@ -326,3 +373,5 @@ if __name__=="__main__":
     port = int(os.environ.get("PORT", 10000))
     Thread(target=lambda: bot.infinity_polling()).start()
     app.run(host="0.0.0.0", port=port)
+
+
