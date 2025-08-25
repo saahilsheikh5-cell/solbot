@@ -42,6 +42,8 @@ coin_intervals = load_json(COIN_INTERVALS_FILE,{})
 def get_klines(symbol, interval="15m", limit=100):
     try:
         data = requests.get(f"{KLINES_URL}?symbol={symbol}&interval={interval}&limit={limit}", timeout=10).json()
+        if not isinstance(data, list) or len(data) == 0:
+            return [], []
         closes = [float(c[4]) for c in data]
         volumes = [float(c[5]) for c in data]
         return closes, volumes
@@ -49,6 +51,8 @@ def get_klines(symbol, interval="15m", limit=100):
         return [], []
 
 def rsi(data, period=14):
+    if len(data) < period + 1:
+        return pd.Series()
     delta = np.diff(data)
     gain = np.maximum(delta,0)
     loss = -np.minimum(delta,0)
@@ -58,9 +62,13 @@ def rsi(data, period=14):
     return 100-(100/(1+rs))
 
 def ema(data, period=14):
+    if len(data) < period:
+        return []
     return pd.Series(data).ewm(span=period, adjust=False).mean().tolist()
 
 def macd(data, fast=12, slow=26, signal=9):
+    if len(data) < slow:
+        return [], []
     fast_ema = pd.Series(data).ewm(span=fast, adjust=False).mean()
     slow_ema = pd.Series(data).ewm(span=slow, adjust=False).mean()
     macd_line = fast_ema - slow_ema
@@ -69,17 +77,30 @@ def macd(data, fast=12, slow=26, signal=9):
 
 def ultra_signal(symbol, interval):
     closes, volumes = get_klines(symbol, interval)
-    if not closes or len(closes)<26: 
+    if not closes or len(closes) < 26:
         return f"❌ No data for {symbol} in {interval}"
+
     last_close = closes[-1]
-    last_vol = volumes[-1]
-    r = rsi(closes)[-1]
+    last_vol = volumes[-1] if volumes else 0
+
+    r_series = rsi(closes)
+    if r_series.empty:
+        return f"❌ RSI not available for {symbol} in {interval}"
+    r = r_series.iloc[-1]
+
     m, s = macd(closes)
-    e = ema(closes,20)[-1]
+    if len(m) == 0 or len(s) == 0:
+        return f"❌ MACD not available for {symbol} in {interval}"
+
+    e_list = ema(closes, 20)
+    if not e_list:
+        return f"❌ EMA not available for {symbol} in {interval}"
+    e = e_list[-1]
+
     signal_text = f"{symbol} | {interval}\nPrice: {last_close:.4f}\nRSI: {r:.2f}\nMACD: {m[-1]:.4f}\nSignal Line: {s[-1]:.4f}\nEMA: {e:.4f}\nVolume: {last_vol:.4f}\n"
 
-    strong_buy = r<settings["rsi_buy"] and m[-1]>s[-1] and last_close>e and last_vol>np.mean(volumes)
-    strong_sell = r>settings["rsi_sell"] and m[-1]<s[-1] and last_close<e and last_vol>np.mean(volumes)
+    strong_buy = r < settings["rsi_buy"] and m[-1] > s[-1] and last_close > e and last_vol > np.mean(volumes)
+    strong_sell = r > settings["rsi_sell"] and m[-1] < s[-1] and last_close < e and last_vol > np.mean(volumes)
 
     if strong_buy:
         signal_text += "🟢 ULTRA STRONG BUY"
@@ -87,6 +108,7 @@ def ultra_signal(symbol, interval):
         signal_text += "🔴 ULTRA STRONG SELL"
     else:
         signal_text += "⚪ Neutral"
+
     return signal_text
 
 # ================= SIGNAL MANAGEMENT =================
@@ -117,7 +139,9 @@ threading.Thread(target=signal_scanner, daemon=True).start()
 
 # ================= USER STATE & MENUS =================
 user_state = {}
+selected_coin = {}
 
+# ----- MAIN MENU -----
 def main_menu(msg):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("➕ Add Coin","📊 My Coins")
@@ -132,7 +156,7 @@ def start(msg):
     bot.send_message(msg.chat.id,"✅ Bot deployed and running!")
     main_menu(msg)
 
-# ------------------ ADD COIN ------------------
+# ---------------- ADD / REMOVE COIN ------------------
 @bot.message_handler(func=lambda m: m.text=="➕ Add Coin")
 def add_coin_menu(msg):
     chat_id = msg.chat.id
@@ -154,11 +178,44 @@ def process_add_coin(msg):
     user_state[chat_id] = None
     main_menu(msg)
 
-# ------------------ Placeholders for all other menus ------------------
-# Implement My Coins, Remove Coin, Top Movers, Signals, Stop Signals, Reset Settings,
-# Signal Settings, Preview Signal calling ultra_signal() and proper timeframes/back buttons
+@bot.message_handler(func=lambda m: m.text=="➖ Remove Coin")
+def remove_coin_menu(msg):
+    chat_id = msg.chat.id
+    if not coins:
+        bot.send_message(chat_id,"⚠️ No coins to remove.")
+        main_menu(msg)
+        return
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for c in coins:
+        markup.add(c)
+    markup.add("🔙 Back")
+    bot.send_message(chat_id,"Select coin to remove:", reply_markup=markup)
+    user_state[chat_id] = "removing_coin"
+
+@bot.message_handler(func=lambda m: user_state.get(m.chat.id)=="removing_coin")
+def process_remove_coin(msg):
+    chat_id = msg.chat.id
+    coin = msg.text.upper()
+    if coin in coins:
+        coins.remove(coin)
+        save_json(USER_COINS_FILE, coins)
+        bot.send_message(chat_id,f"✅ {coin} removed.")
+    else:
+        bot.send_message(chat_id,"❌ Coin not in list.")
+    user_state[chat_id] = None
+    main_menu(msg)
+
+# ---------------- TO BE IMPLEMENTED ------------------
+# My Coins -> Timeframes -> ultra_signal
+# Top Movers -> 5m/1h/24h
+# Signals -> My Coins / All Coins / Any Coin -> Timeframes -> ultra_signal
+# Stop Signals -> same as Signals but adds to muted_coins
+# Reset Settings -> shows current values and resets
+# Signal Settings -> adjust thresholds
+# Preview Signal -> example ultra_signal
+# All using user_state and selected_coin dictionaries
 
 # ================= START BOT =================
 if __name__=="__main__":
-    bot.remove_webhook()  # Remove old webhooks
+    bot.remove_webhook()
     bot.infinity_polling()
