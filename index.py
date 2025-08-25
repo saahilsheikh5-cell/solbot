@@ -5,20 +5,15 @@ import pandas as pd
 import numpy as np
 import json
 import time
-from flask import Flask, request
-from telebot import types
 import threading
+from telebot import types
 
 # ================= CONFIG =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = int(os.environ.get("CHAT_ID") or 0)
-RENDER_URL = os.environ.get("RENDER_URL")  # e.g., https://your-app.onrender.com
-WEBHOOK_URL = f"{RENDER_URL}/{BOT_TOKEN}"
 KLINES_URL = "https://api.binance.com/api/v3/klines"
-TOP_COINS_URL = "https://api.binance.com/api/v3/ticker/24hr"
 
 bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(__name__)
 
 # ================= STORAGE =================
 USER_COINS_FILE = "user_coins.json"
@@ -45,11 +40,8 @@ coin_intervals = load_json(COIN_INTERVALS_FILE,{})
 
 # ================= TECHNICAL ANALYSIS =================
 def get_klines(symbol, interval="15m", limit=100):
-    url = f"{KLINES_URL}?symbol={symbol}&interval={interval}&limit={limit}"
     try:
-        data = requests.get(url, timeout=10).json()
-        if isinstance(data, dict) and "code" in data:
-            return [], []
+        data = requests.get(f"{KLINES_URL}?symbol={symbol}&interval={interval}&limit={limit}", timeout=10).json()
         closes = [float(c[4]) for c in data]
         volumes = [float(c[5]) for c in data]
         return closes, volumes
@@ -125,7 +117,6 @@ threading.Thread(target=signal_scanner, daemon=True).start()
 
 # ================= USER STATE & MENUS =================
 user_state = {}
-user_temp = {}
 
 def main_menu(msg):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -163,24 +154,11 @@ def process_add_coin(msg):
     user_state[chat_id] = None
     main_menu(msg)
 
-# ------------------ BACKUP PLACEHOLDERS ------------------
-# My Coins, Remove Coins, Top Movers, Signals, Stop Signals, Reset Settings, Signal Settings, Preview Signal
-# Implement as before, calling ultra_signal() and handling timeframes/back buttons
+# ------------------ Placeholders for all other menus ------------------
+# Implement My Coins, Remove Coin, Top Movers, Signals, Stop Signals, Reset Settings,
+# Signal Settings, Preview Signal calling ultra_signal() and proper timeframes/back buttons
 
-# ================= FLASK WEBHOOK =================
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    json_str = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return "!",200
-
-@app.route("/")
-def index():
-    return "Bot running!",200
-
-# ================= START WEBHOOK =================
+# ================= START BOT =================
 if __name__=="__main__":
-    bot.remove_webhook()
-    bot.set_webhook(url=WEBHOOK_URL)
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    bot.remove_webhook()  # Remove old webhooks
+    bot.infinity_polling()
