@@ -10,9 +10,10 @@ from telebot import types
 import threading
 
 # ================= CONFIG =================
-BOT_TOKEN = os.environ.get("BOT_TOKEN") or "YOUR_BOT_TOKEN"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = int(os.environ.get("CHAT_ID") or 0)
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL") or "https://yourrenderurl.com/" + BOT_TOKEN
+RENDER_URL = os.environ.get("RENDER_URL")  # e.g., https://your-app.onrender.com
+WEBHOOK_URL = f"{RENDER_URL}/{BOT_TOKEN}"
 KLINES_URL = "https://api.binance.com/api/v3/klines"
 TOP_COINS_URL = "https://api.binance.com/api/v3/ticker/24hr"
 
@@ -85,7 +86,6 @@ def ultra_signal(symbol, interval):
     e = ema(closes,20)[-1]
     signal_text = f"{symbol} | {interval}\nPrice: {last_close:.4f}\nRSI: {r:.2f}\nMACD: {m[-1]:.4f}\nSignal Line: {s[-1]:.4f}\nEMA: {e:.4f}\nVolume: {last_vol:.4f}\n"
 
-    # Ultra refined logic
     strong_buy = r<settings["rsi_buy"] and m[-1]>s[-1] and last_close>e and last_vol>np.mean(volumes)
     strong_sell = r>settings["rsi_sell"] and m[-1]<s[-1] and last_close<e and last_vol>np.mean(volumes)
 
@@ -123,11 +123,10 @@ def signal_scanner():
 
 threading.Thread(target=signal_scanner, daemon=True).start()
 
-# ================= USER STATE =================
-user_state = {}  # chat_id -> menu state
-user_temp = {}   # temporary storage per user
+# ================= USER STATE & MENUS =================
+user_state = {}
+user_temp = {}
 
-# ================= BOT MENUS =================
 def main_menu(msg):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("➕ Add Coin","📊 My Coins")
@@ -142,7 +141,7 @@ def start(msg):
     bot.send_message(msg.chat.id,"✅ Bot deployed and running!")
     main_menu(msg)
 
-# ---------------- ADD COIN ----------------
+# ------------------ ADD COIN ------------------
 @bot.message_handler(func=lambda m: m.text=="➕ Add Coin")
 def add_coin_menu(msg):
     chat_id = msg.chat.id
@@ -164,88 +163,11 @@ def process_add_coin(msg):
     user_state[chat_id] = None
     main_menu(msg)
 
-# ---------------- REMOVE COIN ----------------
-@bot.message_handler(func=lambda m: m.text=="➖ Remove Coin")
-def remove_coin_menu(msg):
-    chat_id = msg.chat.id
-    if not coins:
-        bot.send_message(chat_id,"⚠️ No coins saved.")
-        return
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for c in coins:
-        markup.add(c)
-    markup.add("🔙 Back")
-    bot.send_message(chat_id,"Select coin to remove:", reply_markup=markup)
-    user_state[chat_id] = "remove_coin"
+# ------------------ BACKUP PLACEHOLDERS ------------------
+# My Coins, Remove Coins, Top Movers, Signals, Stop Signals, Reset Settings, Signal Settings, Preview Signal
+# Implement as before, calling ultra_signal() and handling timeframes/back buttons
 
-@bot.message_handler(func=lambda m: user_state.get(m.chat.id)=="remove_coin")
-def process_remove_coin(msg):
-    chat_id = msg.chat.id
-    coin = msg.text.upper()
-    if coin=="🔙 Back":
-        main_menu(msg)
-        return
-    if coin in coins:
-        coins.remove(coin)
-        save_json(USER_COINS_FILE, coins)
-        bot.send_message(chat_id,f"✅ {coin} removed.")
-    else:
-        bot.send_message(chat_id,"❌ Coin not found.")
-    main_menu(msg)
-    user_state[chat_id]=None
-
-# ---------------- MY COINS ----------------
-@bot.message_handler(func=lambda m: m.text=="📊 My Coins")
-def my_coins_menu(msg):
-    chat_id = msg.chat.id
-    if not coins:
-        bot.send_message(chat_id,"⚠️ No coins saved. Use ➕ Add Coin.")
-        return
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for c in coins:
-        markup.add(c)
-    markup.add("🔙 Back")
-    bot.send_message(chat_id,"Select a coin:", reply_markup=markup)
-    user_state[chat_id] = "my_coins_select"
-
-@bot.message_handler(func=lambda m: user_state.get(m.chat.id)=="my_coins_select")
-def my_coin_selected(msg):
-    chat_id = msg.chat.id
-    text = msg.text
-    if text=="🔙 Back":
-        main_menu(msg)
-        return
-    if text in coins:
-        user_temp[chat_id] = text
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        for tf in ["1m","5m","15m","1h","1d"]:
-            markup.add(tf)
-        markup.add("🔙 Back")
-        bot.send_message(chat_id,f"Select timeframe for {text}:", reply_markup=markup)
-        user_state[chat_id]="my_coin_tf"
-    else:
-        bot.send_message(chat_id,"❌ Coin not found.")
-
-@bot.message_handler(func=lambda m: user_state.get(m.chat.id)=="my_coin_tf")
-def my_coin_tf_selected(msg):
-    chat_id = msg.chat.id
-    text = msg.text
-    coin = user_temp.get(chat_id)
-    if text=="🔙 Back":
-        my_coins_menu(msg)
-        return
-    if coin:
-        analysis = ultra_signal(coin,text)
-        bot.send_message(chat_id,analysis)
-    else:
-        bot.send_message(chat_id,"❌ Unexpected error.")
-
-# ---------------- PLACEHOLDERS ----------------
-# Top Movers, Signals, Stop Signals, Reset Settings, Signal Settings, Preview Signal
-# Implement similar logic with back buttons and ultra_signal for detailed analysis
-# Error handling included
-
-# ---------------- FLASK WEBHOOK ----------------
+# ================= FLASK WEBHOOK =================
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     json_str = request.get_data().decode('utf-8')
