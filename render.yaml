@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: bitbot
+    env: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: python index.py
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        value: 7638935379:AAEmLD7JHLZ36Ywh5tvmlP1F8xzrcNrym_Q
+      - key: CHAT_ID
+        value: 1263295916
+      - key: BINANCE_API_KEY
+        value: "II9W83CsKlrbcUBFZ1qhDHakDBpVPAjO2YuzGFGBleX3uAxBA8owL8eVezL4pdXB"
+      - key: BINANCE_SECRET
+        value: "HMAC"

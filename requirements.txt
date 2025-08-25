@@ -1,0 +1,5 @@
+telebot
+requests
+numpy
+pandas
+flask
