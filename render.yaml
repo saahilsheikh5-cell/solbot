@@ -12,6 +12,6 @@ services:
       - key: CHAT_ID
         value: "1263295916"
       - key: BINANCE_API_KEY
-        value: "<your_binance_api_key>"
+        value: "II9W83CsKlrbcUBFZ1qhDHakDBpVPAj"
       - key: BINANCE_SECRET
-        value: "HMAC"
+        value: "HMACO2YuzGFGBleX3uAxBA8owL8eVezL4pdXB"
