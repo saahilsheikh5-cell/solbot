@@ -1,17 +1,1 @@
-services:
-  - type: worker
-    name: solbot-worker
-    env: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python index.py
-    autoDeploy: true
-    envVars:
-      - key: BOT_TOKEN
-        value: "7638935379:AAEmLD7JHLZ36Ywh5tvmlP1F8xzrcNrym_Q"
-      - key: CHAT_ID
-        value: "1263295916"
-      - key: BINANCE_API_KEY
-        value: "II9W83CsKlrbcUBFZ1qhDHakDBpVPAj"
-      - key: BINANCE_SECRET
-        value: "HMACO2YuzGFGBleX3uAxBA8owL8eVezL4pdXB"
+
