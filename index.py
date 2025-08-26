@@ -6,14 +6,22 @@ import numpy as np
 import json
 import time
 import threading
+from flask import Flask
 from telebot import types
 
 # ================= CONFIG =================
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_ID = int(os.environ.get("CHAT_ID") or 0)
+BOT_TOKEN = "7638935379:AAEmLD7JHLZ36Ywh5tvmlP1F8xzrcNrym_Q"
+CHAT_ID = 1263295916   # Replace with your personal Telegram user ID
 KLINES_URL = "https://api.binance.com/api/v3/klines"
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# Flask app for Render health check
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running on Render!", 200
 
 # ================= STORAGE =================
 USER_COINS_FILE = "user_coins.json"
@@ -141,7 +149,6 @@ threading.Thread(target=signal_scanner, daemon=True).start()
 user_state = {}
 selected_coin = {}
 
-# ----- MAIN MENU -----
 def main_menu(msg):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("➕ Add Coin","📊 My Coins")
@@ -156,7 +163,7 @@ def start(msg):
     bot.send_message(msg.chat.id,"✅ Bot deployed and running!")
     main_menu(msg)
 
-# ---------------- ADD / REMOVE COIN ------------------
+# ----- Add Coin -----
 @bot.message_handler(func=lambda m: m.text=="➕ Add Coin")
 def add_coin_menu(msg):
     chat_id = msg.chat.id
@@ -178,6 +185,7 @@ def process_add_coin(msg):
     user_state[chat_id] = None
     main_menu(msg)
 
+# ----- Remove Coin -----
 @bot.message_handler(func=lambda m: m.text=="➖ Remove Coin")
 def remove_coin_menu(msg):
     chat_id = msg.chat.id
@@ -205,17 +213,8 @@ def process_remove_coin(msg):
     user_state[chat_id] = None
     main_menu(msg)
 
-# ---------------- TO BE IMPLEMENTED ------------------
-# My Coins -> Timeframes -> ultra_signal
-# Top Movers -> 5m/1h/24h
-# Signals -> My Coins / All Coins / Any Coin -> Timeframes -> ultra_signal
-# Stop Signals -> same as Signals but adds to muted_coins
-# Reset Settings -> shows current values and resets
-# Signal Settings -> adjust thresholds
-# Preview Signal -> example ultra_signal
-# All using user_state and selected_coin dictionaries
-
 # ================= START BOT =================
 if __name__=="__main__":
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000))), daemon=True).start()
     bot.remove_webhook()
     bot.infinity_polling()
